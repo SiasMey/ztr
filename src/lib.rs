@@ -1,14 +1,16 @@
-use std::{ path, fs, error };
+use handlebars::Handlebars;
+use rand::Rng;
 use std::io;
 use std::io::Write;
-use ztr::{ NewNote, Note };
-use handlebars::Handlebars;
+use std::iter;
+use std::{error, fs, path};
+use ztr::{NewNote, Note};
 
 fn open_create(
-    zk_root: &path::PathBuf,
+    zk_root: &path::Path,
     name_generator: &dyn Fn() -> String,
     note: &NewNote,
-    default: &ztr::DefaultNote
+    default: &ztr::DefaultNote,
 ) -> io::Result<path::PathBuf> {
     let note_name = name_generator() + ".md";
     let note_path = zk_root.join(&note_name);
@@ -19,17 +21,17 @@ fn open_create(
     let content = render_note_template(&resolved_note).unwrap_or(String::from(""));
     write!(file, "{}", &content)?;
 
-    return Ok(note_path.to_path_buf());
+    Ok(note_path.to_path_buf())
 }
 
-fn resolve_note_defaults(name: &String, note: &NewNote, default: &ztr::DefaultNote) -> Note {
-    return Note {
+fn resolve_note_defaults(name: &str, note: &NewNote, default: &ztr::DefaultNote) -> Note {
+    Note {
         template: note.template.clone().unwrap_or(default.template.clone()),
-        filename: name.clone(),
+        filename: name.to_string(),
         title: note.title.clone().unwrap_or(default.title.clone()),
         content: note.content.clone().unwrap_or(default.content.clone()),
         tags: note.tags.clone().unwrap_or(default.tags.clone()),
-    };
+    }
 }
 
 fn render_note_template(note: &Note) -> Result<String, Box<dyn error::Error>> {
@@ -38,7 +40,15 @@ fn render_note_template(note: &Note) -> Result<String, Box<dyn error::Error>> {
 
     let output = hb.render("note", &note).unwrap().to_string();
 
-    return Ok(output);
+    Ok(output)
+}
+
+fn generate() -> String {
+    let len = 10;
+    const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+    let mut rng = rand::thread_rng();
+    let one_char = || CHARSET[rng.gen_range(0..CHARSET.len())] as char;
+    iter::repeat_with(one_char).take(len).collect()
 }
 
 pub mod ztr {
@@ -59,9 +69,14 @@ pub mod ztr {
             template: Option<String>,
             title: Option<String>,
             content: Option<String>,
-            tags: Option<Vec<String>>
+            tags: Option<Vec<String>>,
         ) -> Self {
-            Self { template, title, content, tags }
+            Self {
+                template,
+                title,
+                content,
+                tags,
+            }
         }
     }
 
@@ -85,22 +100,34 @@ pub mod ztr {
         pub fn new() -> Self {
             Self {
                 template: String::from(
-                    "{{#if tags}}---\n\ntags:\n\n{{#each tags}}  -{{this}}\n{{/each}}\n---\n{{/if}}# {{title}}\n\n{{content}}"
+                    "# {{title}}\n\n{{content}}\n\n{{#if tags}}{{#each tags}}#[[{{this}}]] {{/each}}{{/if}}"
                 ),
-                title: String::from("No note Title"),
-                content: String::from("No note content"),
-                tags: Vec::new(),
+                title: String::from("New zettle"),
+                content: String::from("New note content"),
+                tags: vec!["fleeting".to_string()]
             }
         }
     }
 
-    pub fn create(zk_root: &path::PathBuf) -> path::PathBuf {
-        return open_create(
+    impl Default for DefaultNote {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    pub fn create(zk_root: &path::Path) -> path::PathBuf {
+        open_create(
             zk_root,
-            &(|| String::from("test")),
-            &(NewNote { template: None, title: None, content: None, tags: None }),
-            &DefaultNote::new()
-        ).unwrap();
+            &(generate),
+            &(NewNote {
+                template: None,
+                title: None,
+                content: None,
+                tags: None,
+            }),
+            &DefaultNote::new(),
+        )
+        .unwrap()
     }
 }
 
@@ -112,14 +139,14 @@ mod tests {
     use assert_fs::prelude::*;
 
     fn create_note_defaults() -> DefaultNote {
-        return DefaultNote {
+        DefaultNote {
             template: String::from(
-                "{{#if tags}}---\n\ntags:\n\n{{#each tags}}  -{{this}}\n{{/each}}\n---\n{{/if}}# {{title}}\n\n{{content}}"
+                "{{#if tags}}---\ntags:\n{{#each tags}}  - {{this}}\n{{/each}}\n---\n\n{{/if}}# {{title}}\n\n{{content}}"
             ),
             title: String::from(""),
             content: String::from(""),
             tags: vec!(),
-        };
+        }
     }
 
     #[test]
@@ -147,12 +174,10 @@ mod tests {
 
         let _result = open_create(&zk_root, &name_generator, &note, &default);
 
-        assert!(
-            temp_dir
-                .child("test.md")
-                .try_exists()
-                .expect("Failed to check if file 'test.md' exists in temp dir")
-        );
+        assert!(temp_dir
+            .child("test.md")
+            .try_exists()
+            .expect("Failed to check if file 'test.md' exists in temp dir"));
     }
 
     #[test]
@@ -165,7 +190,7 @@ mod tests {
             Some(String::from("{{title}}")),
             Some(String::from("test-title")),
             None,
-            None
+            None,
         );
         let default = create_note_defaults();
 
@@ -185,7 +210,7 @@ mod tests {
             Some(String::from("{{content}}")),
             None,
             Some(String::from("test-content")),
-            None
+            None,
         );
         let default = create_note_defaults();
 
@@ -205,7 +230,7 @@ mod tests {
             None,
             Some(String::from("test-title")),
             Some(String::from("test-content")),
-            None
+            None,
         );
         let default = create_note_defaults();
 
@@ -223,14 +248,12 @@ mod tests {
         let zk_root = temp_dir.path().to_path_buf();
         let name_generator = || String::from("test");
         let note = NewNote::new(
-            Some(
-                String::from(
-                    "{{#if tags}}---\n\ntags:\n\n{{#each tags}}  -{{this}}\n{{/each}}\n---{{/if}}"
-                )
-            ),
+            Some(String::from(
+                "{{#if tags}}---\n\ntags:\n\n{{#each tags}}  -{{this}}\n{{/each}}\n---{{/if}}",
+            )),
             None,
             None,
-            Some(vec![String::from("test1"), String::from("test2")])
+            Some(vec![String::from("test1"), String::from("test2")]),
         );
         let default = create_note_defaults();
 
@@ -248,14 +271,12 @@ mod tests {
         let zk_root = temp_dir.path().to_path_buf();
         let name_generator = || String::from("test");
         let note = NewNote::new(
-            Some(
-                String::from(
-                    "{{#if tags}}---\n\ntags:\n\n{{#each tags}}  -{{this}}\n{{/each}}\n---{{/if}}"
-                )
-            ),
+            Some(String::from(
+                "{{#if tags}}---\n\ntags:\n\n{{#each tags}}  -{{this}}\n{{/each}}\n---{{/if}}",
+            )),
             None,
             None,
-            None
+            None,
         );
         let default = create_note_defaults();
 
@@ -273,14 +294,12 @@ mod tests {
         let zk_root = temp_dir.path().to_path_buf();
         let name_generator = || String::from("test");
         let note = NewNote::new(
-            Some(
-                String::from(
-                    "{{#if tags}}---\n\ntags:\n\n{{#each tags}}  -{{this}}\n{{/each}}\n---{{/if}}"
-                )
-            ),
+            Some(String::from(
+                "{{#if tags}}---\n\ntags:\n\n{{#each tags}}  -{{this}}\n{{/each}}\n---{{/if}}",
+            )),
             None,
             None,
-            Some(vec![])
+            Some(vec![]),
         );
         let default = create_note_defaults();
 
@@ -301,11 +320,11 @@ mod tests {
             None,
             None,
             None,
-            Some(vec![String::from("test1"), String::from("test2")])
+            Some(vec![String::from("test1"), String::from("test2")]),
         );
         let default = create_note_defaults();
 
-        let expected = String::from("---\n\ntags:\n\n  -test1\n  -test2\n---\n# \n\n");
+        let expected = String::from("---\ntags:\n  - test1\n  - test2\n---\n\n# \n\n");
         let result = open_create(&zk_root, &name_generator, &note, &default);
 
         let output = std::fs::read_to_string(result.unwrap()).unwrap();

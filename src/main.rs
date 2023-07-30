@@ -1,4 +1,4 @@
-use clap::{ Parser, Subcommand };
+use clap::{Parser, Subcommand};
 use ztr::ztr;
 
 #[derive(Parser)]
@@ -19,10 +19,11 @@ fn main() {
 
     match cli.command {
         Some(Commands::Create {}) => {
-            ztr::create(&std::path::PathBuf::from("/tmp"));
+            let name = ztr::create(&std::path::PathBuf::from(r#"/Users/meysi/notebox"#));
+            print!("{}", name.to_string_lossy())
         }
         None => {
-            println!("No subcommand was used");
+            print!("No subcommand was used");
         }
     }
 }
